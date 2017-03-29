@@ -9,6 +9,7 @@
 
 
 import Yesod
+import Text.Lucius
 
 import Data.Text(Text)
 import qualified Data.Text as Txt
@@ -40,8 +41,8 @@ instance RenderMessage Calendar FormMessage where
     renderMessage _ _ = defaultFormMessage
 
 mkYesod "Calendar" [parseRoutes|
-/ HomeR GET POST
-/calendar CalendrR GET
+/ HomeR GET
+/calendar CalendrR GET POST
 |]
 instance Yesod Calendar
 
@@ -54,9 +55,7 @@ getHomeR = do
   
   defaultLayout $ do
    setTitle "Calendar"
-   toWidget [lucius|
-               body {background-color: grey;}
-               form .request-day {font-size: 50%;} |]
+   mapM_ toWidget [[lucius|body {background-color: grey;}|], requestFormStyles]
    [whamlet|
       <p>
        #{dispEventCalendr today knownEvents}
@@ -65,8 +64,8 @@ getHomeR = do
 getCalendrR :: Handler Html
 getCalendrR = getHomeR
        
-postHomeR :: Handler ()
-postHomeR = do
+postCalendrR :: Handler ()
+postCalendrR = do
   newEvDay <- read . Txt.unpack <$> runInputPost (ireq textField "day")
   newEvent <- runInputPost $ iopt textField "event"
   Calendar eventsState <- getYesod
@@ -89,15 +88,24 @@ dispEventCalendr day₀ events = [shamlet|
  where daysTable = groupBy ((==)`on`view (mondayWeek . _mwWeek))
                     $ take 511 [day₀ & mondayWeek . _mwDay .~ 1 ..]
 
+requestFormStyles :: t -> Css
+requestFormStyles = [lucius|
+               form .request-day {font-size: 50%;}
+               form .event-enter-button {display: none;} |]
+
 dispDay :: Map.Map Day Event -> Day -> Html
 dispDay events d = case Map.lookup d events of
+    Just ev -> [shamlet| #{ev} |] 
     Nothing -> [shamlet|
                  <form method=post>
                   <input class=request-day
                          type=text name=day
                          value="#{show d}">
-                  <input class=submit_on_enter
+                  <input class=event-request
                          type=text name=event>
+                  <input class=event-enter-button
+                         type=submit
+                         value=enter>
                |]
  where dayId = "day" ++ filter isAlphaNum (show d)
 
