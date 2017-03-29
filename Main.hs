@@ -31,7 +31,12 @@ import Data.Thyme
 import Data.Thyme.Calendar.WeekDate
 
 
-type Event = Text
+type User = Text
+
+data Event = Event {
+       _eventOrganiser :: User
+     , _eventDescription :: Text
+     }
 
 
 data Calendar = Calendar {
@@ -43,26 +48,50 @@ instance RenderMessage Calendar FormMessage where
 mkYesod "Calendar" [parseRoutes|
 / HomeR GET
 /calendar CalendrR GET POST
+/setname SetNameR GET POST
 |]
 instance Yesod Calendar
 
 getHomeR :: Handler Html
-getHomeR = do
-  Calendar eventsState <- getYesod
-  knownEvents <- liftIO $ readIORef eventsState
-  t <- liftIO getCurrentTime
-  let today = t^._utctDay
-  
-  defaultLayout $ do
-   setTitle "Calendar"
-   mapM_ toWidget [[lucius|body {background-color: grey;}|], requestFormStyles]
-   [whamlet|
-      <p>
-       #{dispEventCalendr today knownEvents}
-    |]
+getHomeR = redirect CalendrR
+
+getSetNameR :: Handler Html
+getSetNameR = defaultLayout $ do
+        [whamlet|
+         <form class=login method=post>
+           <div class=username>
+             Name:
+             <input type=text name=username>
+           <div class=dologin>
+             <input type=submit value="enter">
+        |]
+
+postSetNameR :: Handler ()
+postSetNameR = do
+   usr <- runInputPost $ ireq textField "username"
+   setSession "username" usr
+   redirectUltDest CalendrR
   
 getCalendrR :: Handler Html
-getCalendrR = getHomeR
+getCalendrR = do
+   sessionUser <- lookupSession "username"
+   case sessionUser of
+     Just thisUser -> do
+        Calendar eventsState <- getYesod
+        knownEvents <- liftIO $ readIORef eventsState
+        t <- liftIO getCurrentTime
+        let today = t^._utctDay
+        
+        defaultLayout $ do
+         setTitle "Calendar"
+         mapM_ toWidget [[lucius|body {background-color: grey;}|], requestFormStyles]
+         [whamlet|
+            <p>
+             #{dispEventCalendr today knownEvents}
+          |]
+     Nothing -> do
+        setUltDestCurrent
+        redirect SetNameR
        
 postCalendrR :: Handler ()
 postCalendrR = do
@@ -70,8 +99,10 @@ postCalendrR = do
   newEvent <- runInputPost $ iopt textField "event"
   Calendar eventsState <- getYesod
   oldEvent <- liftIO $ Map.lookup newEvDay <$> readIORef eventsState
+  thisUser <- determineUser
   case (oldEvent,newEvent) of
-     (Nothing, Just new) -> liftIO . modifyIORef eventsState $ Map.insert newEvDay new
+     (Nothing, Just new) -> liftIO . modifyIORef eventsState
+                     . Map.insert newEvDay $ Event thisUser new
      _ -> return ()
   redirect CalendrR
    
@@ -95,7 +126,7 @@ requestFormStyles = [lucius|
 
 dispDay :: Map.Map Day Event -> Day -> Html
 dispDay events d = case Map.lookup d events of
-    Just ev -> [shamlet| #{ev} |] 
+    Just (Event _ ev) -> [shamlet| #{ev} |] 
     Nothing -> [shamlet|
                  <form method=post>
                   <input class=request-day
@@ -108,6 +139,14 @@ dispDay events d = case Map.lookup d events of
                          value=enter>
                |]
  where dayId = "day" ++ filter isAlphaNum (show d)
+
+
+determineUser :: Handler User
+determineUser = do
+    sessionUser <- lookupSession "username"
+    return $ case sessionUser of
+        Just u -> u
+        Nothing -> "guest"
 
 
 main :: IO ()
