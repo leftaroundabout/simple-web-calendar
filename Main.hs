@@ -15,6 +15,8 @@ import System.Environment (getArgs)
 
 import Data.Text(Text)
 import qualified Data.Text as Txt
+import qualified Data.ByteString.Lazy as BS
+import qualified Data.Aeson as JSON
 import Data.Maybe
 import Data.List (groupBy, isPrefixOf)
 import Data.Ord
@@ -39,9 +41,11 @@ type User = Text
 type TxtDate = String
 
 data Event = Event {
-       _eventOrganiser :: User
-     , _eventDescription :: Text
-     }
+       eventOrganiser :: User
+     , eventDescription :: Text
+     } deriving (Generic)
+instance FromJSON Event
+instance ToJSON Event
 data ScheduleForEvent = ScheduleForEvent {
        eventDate :: TxtDate
      , scheduledEvent :: String
@@ -55,6 +59,7 @@ data Permission = Permission {
 
 data Calendar = Calendar {
     eventsSched :: IORef (Map.Map Day Event)
+  , backupFile :: Maybe FilePath
   , userPermissions :: Map.Map User Permission
   }
 instance RenderMessage Calendar FormMessage where
@@ -94,7 +99,7 @@ getCalendrR = do
    sessionUser <- determineUser
    case sessionUser of
      Just thisUser -> do
-        Calendar eventsState allPermissions <- getYesod
+        Calendar eventsState _ allPermissions <- getYesod
         knownEvents <- liftIO $ readIORef eventsState
         t <- liftIO getCurrentTime
         let today = t^._utctDay
@@ -115,13 +120,15 @@ postCalendrR = do
 
 tryScheduleEvent :: Day -> Maybe Text -> Handler ()
 tryScheduleEvent newEvDay newEvent = do
-  Calendar eventsState permission <- getYesod
+  Calendar eventsState _ permission <- getYesod
   oldEvent <- liftIO $ Map.lookup newEvDay <$> readIORef eventsState
   thisUser <- determineUser
   case thisUser of
     Just (usr, Permission _ writeAny) -> case (oldEvent,newEvent) of
-        (Nothing, Just new) -> liftIO . modifyIORef eventsState
+        (Nothing, Just new) -> do
+            liftIO . modifyIORef eventsState
                      . Map.insert newEvDay $ Event usr new
+            updateBackup
         _ -> return ()
     Nothing -> redirect SetNameR
   redirect CalendrR
@@ -221,20 +228,41 @@ dispDay (usr, Permission viewAll _) events d = case Map.lookup d events of
 determineUser :: Handler (Maybe (User, Permission))
 determineUser = do
     sessionUser <- lookupSession "username"
-    Calendar _ allPermissions <- getYesod
+    Calendar _ _ allPermissions <- getYesod
     return $ case sessionUser of
         Just u -> Just $ case Map.lookup u allPermissions of
                    Just p -> (u, p)
                    Nothing -> (u, Permission False False)
         Nothing -> Nothing
 
+                
+
+updateBackup :: Handler ()
+updateBackup = do
+    Calendar state bupfile _ <- getYesod
+    case bupfile of
+      Nothing -> return ()
+      Just bup -> liftIO $ do
+         calendata <- readIORef state
+         BS.writeFile bup . JSON.encode . toJSON $ Map.mapKeys show calendata
+
+
 
 main :: IO ()
 main = do
    args <- getArgs
    let permissions = parsePermissions args
-   noDates <- newIORef $ Map.empty
-   warp 3735 $ Calendar noDates permissions
+       bupfile = parseBackupfilename args
+   initDates <- newIORef $ Map.empty
+   case bupfile of
+     Nothing -> do
+       putStrLn
+         "Warning: running without persistent backup. Data will be lost after shutdown."
+     Just bup -> do
+       Just (JSON.Success calendata)
+               <- fmap JSON.fromJSON . JSON.decode <$> BS.readFile bup
+       writeIORef initDates $ Map.mapKeys read calendata
+   warp 3735 $ Calendar initDates bupfile permissions
 
 
 parsePermissions :: [String] -> Map.Map User Permission
@@ -247,4 +275,10 @@ parsePermissions (arg:args)
                                      $ parsePermissions args
  | otherwise  = parsePermissions args
 
+parseBackupfilename :: [String] -> Maybe FilePath
+parseBackupfilename [] = Nothing
+parseBackupfilename (arg:args)
+ | "--backupfile="`isPrefixOf`arg  = Just (filter (/='"') . tail
+                                             $ dropWhile (/='=') arg)
+ | otherwise  = parseBackupfilename args
 
