@@ -91,11 +91,8 @@ getCalendrR = do
         
         defaultLayout $ do
          setTitle "Calendar"
-         mapM_ toWidget [[lucius|body {background-color: grey;}|], requestFormStyles]
-         [whamlet|
-            <p>
-             #{dispEventCalendr thisUser today knownEvents}
-          |]
+         toWidget [lucius|body {background-color: grey;}|]
+         dispEventCalendr thisUser today knownEvents
      Nothing -> do
         setUltDestCurrent
         redirect SetNameR
@@ -116,8 +113,27 @@ postCalendrR = do
   redirect CalendrR
    
 
-dispEventCalendr :: (User, Permission) -> Day -> Map.Map Day Event -> Html
-dispEventCalendr usr day₀ events = [shamlet|
+dispEventCalendr :: (User, Permission) -> Day -> Map.Map Day Event -> Widget
+dispEventCalendr usr day₀ events = do
+        toWidget [lucius|
+               table.calendar, .calendar form input {color: black;}
+               .calendar .content .days {table-layout: fixed; width: 100%;}
+               .calendar .content .days td {position: relative;}
+               .calendar .monthblock #evenmonth {background-color: #88B; color: #55C;}
+               .calendar .monthblock #oddmonth {background-color: #8B8; color: #090;}
+               .calendar .monthblock .name table {
+                  position: relative; width: 5em; }
+               .calendar .monthblock .monthname {
+                  position: absolute; font-size: 400%; right: 0px;}
+               .calendar .monthblock .days .day-in-month {
+                  position: absolute; right: 4px; font-size: 200%; color: rgba(255,255,255,0.3);}
+               .calendar .monthblock .days .edit-event-day {width: 96%;}
+               form .request-day {
+                  width: 100%; background-color: rgba(80,80,80,0.5); font-size: 50%;}
+               form .event-request {
+                  width: 100%; background-color: rgba(160,160,160,0.8);}
+               form .event-enter-button {display: none;} |]
+        [whamlet|
            <table class=calendar>
              $forall (month,bmonth) <- daysTable
                <tr class=monthblock>
@@ -141,26 +157,6 @@ dispEventCalendr usr day₀ events = [shamlet|
        monthParity m = case m`mod`2 of
                  0 -> "evenmonth" :: Text
                  1 -> "oddmonth"
-
-requestFormStyles :: t -> Css
-requestFormStyles = [lucius|
-               table.calendar, .calendar form input {color: black;}
-               .calendar .content .days {table-layout: fixed; width: 100%;}
-               .calendar .content .days td {position: relative;}
-               .calendar .monthblock #evenmonth {background-color: #88B; color: #55C;}
-               .calendar .monthblock #oddmonth {background-color: #8B8; color: #090;}
-               .calendar .monthblock .name table {
-                  position: relative; width: 5em; }
-               .calendar .monthblock .monthname {
-                  position: absolute; font-size: 400%; right: 0px;}
-               .calendar .monthblock .days .day-in-month {
-                  position: absolute; right: 4px; font-size: 200%; color: rgba(255,255,255,0.3);}
-               .calendar .monthblock .days .edit-event-day {width: 96%;}
-               form .request-day {
-                  width: 100%; background-color: rgba(80,80,80,0.5); font-size: 50%;}
-               form .event-request {
-                  width: 100%; background-color: rgba(160,160,160,0.8);}
-               form .event-enter-button {display: none;} |]
 
 dispDay :: (User, Permission) -> Map.Map Day Event -> Day -> Html
 dispDay (usr, Permission viewAll _) events d = case Map.lookup d events of
