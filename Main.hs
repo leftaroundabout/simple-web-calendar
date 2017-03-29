@@ -119,24 +119,56 @@ postCalendrR = do
 dispEventCalendr :: (User, Permission) -> Day -> Map.Map Day Event -> Html
 dispEventCalendr usr day₀ events = [shamlet|
            <table class=calendar>
-             $forall week <- daysTable
-               <tr class=week>
-                 $forall day <- week
-                  <td class=day>
-                    #{dispDay usr events day}
+             $forall (month,bmonth) <- daysTable
+               <tr class=monthblock>
+                 <td class=name>
+                   <table><tr id=#{monthParity month}><td class=monthname>
+                       #{show month}
+                 <td class=content>
+                   <table class=days>
+                     $forall week <- bmonth
+                       <tr class=week>
+                         $forall day <- week
+                          <td class=day id=#{dayMonthParity day}>
+                            #{dispDay usr events day}
          |]
- where daysTable = groupBy ((==)`on`view (mondayWeek . _mwWeek))
+ where daysTable = map (\monthblock -> (fst $ head monthblock, snd <$> monthblock))
+                 . groupBy ((==)`on`fst)
+                 . map (\week -> (last week ^. gregorian . _ymdMonth, week))
+                 . groupBy ((==)`on`view (mondayWeek . _mwWeek))
                     $ take 511 [day₀ & mondayWeek . _mwDay .~ 1 ..]
+       dayMonthParity d = monthParity $ d ^. gregorian . _ymdMonth
+       monthParity m = case m`mod`2 of
+                 0 -> "evenmonth" :: Text
+                 1 -> "oddmonth"
 
 requestFormStyles :: t -> Css
 requestFormStyles = [lucius|
-               form .request-day {font-size: 50%;}
+               table.calendar, .calendar form input {color: black;}
+               .calendar .content .days {table-layout: fixed; width: 100%;}
+               .calendar .content .days td {position: relative;}
+               .calendar .monthblock #evenmonth {background-color: #88B; color: #55C;}
+               .calendar .monthblock #oddmonth {background-color: #8B8; color: #090;}
+               .calendar .monthblock .name table {
+                  position: relative; width: 5em; }
+               .calendar .monthblock .monthname {
+                  position: absolute; font-size: 400%; right: 0px;}
+               .calendar .monthblock .days .day-in-month {
+                  position: absolute; right: 4px; font-size: 200%; color: rgba(255,255,255,0.3);}
+               .calendar .monthblock .days .edit-event-day {width: 96%;}
+               form .request-day {
+                  width: 100%; background-color: rgba(80,80,80,0.5); font-size: 50%;}
+               form .event-request {
+                  width: 100%; background-color: rgba(160,160,160,0.8);}
                form .event-enter-button {display: none;} |]
 
 dispDay :: (User, Permission) -> Map.Map Day Event -> Day -> Html
 dispDay (usr, Permission viewAll _) events d = case Map.lookup d events of
     Just (Event evUsr ev) -> if viewAll || usr==evUsr
         then [shamlet|
+               <div class=day-in-month>
+                 #{dayInMonth}
+               <div class=edit-event-day>
                  <form method=post>
                   <input class=request-day
                          type=text name=day
@@ -151,6 +183,7 @@ dispDay (usr, Permission viewAll _) events d = case Map.lookup d events of
         else [shamlet| #{show d} |]
     Nothing -> dispDay (usr, Permission True False) (Map.singleton d $ Event usr "") d
  where dayId = "day" ++ filter isAlphaNum (show d)
+       dayInMonth = d ^. gregorian . _ymdDay
 
 
 determineUser :: Handler (Maybe (User, Permission))
