@@ -1,0 +1,9 @@
+*~
+*.hi
+*.o
+bin/*
+*.aes
+*.dyn_hi
+*.dyn_o
+dist
+Main
