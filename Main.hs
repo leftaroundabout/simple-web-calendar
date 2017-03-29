@@ -153,7 +153,8 @@ dispEventCalendr usr day₀ events = do
                .calendar .monthblock .monthname {
                   position: absolute; font-size: 400%; right: 0px;}
                .calendar .monthblock .days .day-in-month {
-                  position: absolute; right: 4px; font-size: 200%; color: rgba(255,255,255,0.3);}
+                  position: absolute; right: 4px; top:2px; font-size: 200%
+                ; color: rgba(255,255,255,0.3);}
                .calendar .monthblock .days .edit-event-day {width: 96%;}
                form #request-day {
                   width: 100%; background-color: rgba(80,80,80,0.5); font-size: 50%;}
@@ -202,11 +203,11 @@ dispEventCalendr usr day₀ events = do
                  1 -> "oddmonth"
 
 dispDay :: (User, Permission) -> Map.Map Day Event -> Day -> Html
-dispDay (usr, Permission viewAll _) events d = case Map.lookup d events of
+dispDay (usr, Permission viewAll _) events d = do
+  [shamlet| <div class=day-in-month> #{dayInMonth} |]
+  case Map.lookup d events of
     Just (Event evUsr ev) -> if viewAll || usr==evUsr
         then [shamlet|
-               <div class=day-in-month>
-                 #{dayInMonth}
                <div class=edit-event-day>
                  <form method=post>
                   <input #request-day
@@ -219,7 +220,7 @@ dispDay (usr, Permission viewAll _) events d = case Map.lookup d events of
                          type=submit
                          value=enter>
                |]
-        else [shamlet| #{show d} |]
+        else mempty
     Nothing -> dispDay (usr, Permission True False) (Map.singleton d $ Event usr "") d
  where dayId = "day" ++ filter isAlphaNum (show d)
        dayInMonth = d ^. gregorian . _ymdDay
