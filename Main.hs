@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE QuasiQuotes           #-}
 {-# LANGUAGE TemplateHaskell       #-}
-{-# LANGUAGE RecordWildCards       #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TupleSections         #-}
@@ -11,9 +10,13 @@
 
 import Yesod
 
-import Data.Text(Text, pack, unpack)
+import Data.Text(Text)
+import qualified Data.Text as Txt
 import Data.Maybe
+import Data.List (groupBy)
 import Data.Ord
+import Data.Function (on, (&))
+import Data.Char (isAlphaNum)
 import qualified Data.Map as Map
 import Data.Traversable
 import Data.IORef
@@ -21,8 +24,10 @@ import Control.Arrow
 import Prelude hiding (mapM)
 import Control.Monad hiding (mapM, forM)
 import Control.Applicative
+import Control.Lens
 
-import Data.Thyme.Calendar
+import Data.Thyme
+import Data.Thyme.Calendar.WeekDate
 
 
 type Event = Text
@@ -42,14 +47,19 @@ instance Yesod Calendar
 
 getHomeR :: Handler Html
 getHomeR = do
-  Calendar{..} <- getYesod
+  Calendar eventsState <- getYesod
+  knownEvents <- liftIO $ readIORef eventsState
+  t <- liftIO getCurrentTime
+  let today = t^._utctDay
   
   defaultLayout $ do
    setTitle "Calendar"
-   toWidget [lucius| body{background-color: grey;} |]
+   toWidget [lucius|
+               body {background-color: grey;}
+               form .request-day {font-size: 50%;} |]
    [whamlet|
-      <h2>Calendar
-      <p>...
+      <p>
+       #{dispEventCalendr today knownEvents}
     |]
   
 getCalendrR :: Handler Html
@@ -57,12 +67,39 @@ getCalendrR = getHomeR
        
 postHomeR :: Handler ()
 postHomeR = do
-  pwi <- runInputPost $ ireq textField "pwd"
-  setSession "pwd" pwi
+  newEvDay <- read . Txt.unpack <$> runInputPost (ireq textField "day")
+  newEvent <- runInputPost $ iopt textField "event"
+  Calendar eventsState <- getYesod
+  oldEvent <- liftIO $ Map.lookup newEvDay <$> readIORef eventsState
+  case (oldEvent,newEvent) of
+     (Nothing, Just new) -> liftIO . modifyIORef eventsState $ Map.insert newEvDay new
+     _ -> return ()
   redirect CalendrR
    
 
-     
+dispEventCalendr :: Day -> Map.Map Day Event -> Html
+dispEventCalendr day₀ events = [shamlet|
+           <table class=calendar>
+             $forall week <- daysTable
+               <tr class=week>
+                 $forall day <- week
+                  <td class=day>
+                    #{dispDay events day}
+         |]
+ where daysTable = groupBy ((==)`on`view (mondayWeek . _mwWeek))
+                    $ take 511 [day₀ & mondayWeek . _mwDay .~ 1 ..]
+
+dispDay :: Map.Map Day Event -> Day -> Html
+dispDay events d = case Map.lookup d events of
+    Nothing -> [shamlet|
+                 <form method=post>
+                  <input class=request-day
+                         type=text name=day
+                         value="#{show d}">
+                  <input class=submit_on_enter
+                         type=text name=event>
+               |]
+ where dayId = "day" ++ filter isAlphaNum (show d)
 
 
 main :: IO ()
