@@ -129,6 +129,13 @@ tryScheduleEvent newEvDay newEvent = do
             liftIO . modifyIORef eventsState
                      . Map.insert newEvDay $ Event usr new
             updateBackup
+        (Just (Event origUsr _), Just new) | origUsr==usr || writeAny -> do
+            liftIO . modifyIORef eventsState
+                     . Map.insert newEvDay $ Event usr new
+            updateBackup
+        (Just (Event origUsr _), Nothing) | origUsr==usr || writeAny -> do
+            liftIO . modifyIORef eventsState $ Map.delete newEvDay
+            updateBackup
         _ -> return ()
     Nothing -> redirect SetNameR
   redirect CalendrR
