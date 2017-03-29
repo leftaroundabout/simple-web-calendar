@@ -20,7 +20,7 @@ executable yesod-calendar
   main-is:             Main.hs
   -- other-modules:       
   other-extensions:    OverloadedStrings, QuasiQuotes, TemplateHaskell, RecordWildCards, MultiParamTypeClasses, TypeFamilies, TupleSections, ScopedTypeVariables, DeriveFunctor
-  build-depends:       base >=4.8 && <4.9, yesod >=1.4 && <1.5, shakespeare
+  build-depends:       base >=4.8 && <4.9, yesod >=1.4 && <1.5, yesod-form
                        , containers >=0.5 && <0.6, thyme >=0.3 && <0.4, text, lens
   -- hs-source-dirs:      
   default-language:    Haskell2010

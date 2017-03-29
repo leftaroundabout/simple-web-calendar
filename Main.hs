@@ -5,11 +5,11 @@
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TupleSections         #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
-{-# LANGUAGE DeriveFunctor         #-}
+{-# LANGUAGE DeriveGeneric         #-}
 
 
 import Yesod
-import Text.Lucius
+import Yesod.Form.Jquery
 
 import System.Environment (getArgs)
 
@@ -28,6 +28,7 @@ import Prelude hiding (mapM)
 import Control.Monad hiding (mapM, forM)
 import Control.Applicative
 import Control.Lens
+import GHC.Generics
 
 import Data.Thyme
 import Data.Thyme.Calendar.WeekDate
@@ -35,10 +36,17 @@ import Data.Thyme.Calendar.WeekDate
 
 type User = Text
 
+type TxtDate = String
+
 data Event = Event {
        _eventOrganiser :: User
      , _eventDescription :: Text
      }
+data ScheduleForEvent = ScheduleForEvent {
+       eventDate :: TxtDate
+     , scheduledEvent :: String
+     } deriving (Generic)
+instance FromJSON ScheduleForEvent
 
 data Permission = Permission {
        _permissionViewAll :: Bool
@@ -56,8 +64,10 @@ mkYesod "Calendar" [parseRoutes|
 / HomeR GET
 /calendar CalendrR GET POST
 /setname SetNameR GET POST
+/scheduleevent ScheduleEventR PUT
 |]
 instance Yesod Calendar
+instance YesodJquery Calendar
 
 getHomeR :: Handler Html
 getHomeR = redirect CalendrR
@@ -101,6 +111,10 @@ postCalendrR :: Handler ()
 postCalendrR = do
   newEvDay <- read . Txt.unpack <$> runInputPost (ireq textField "day")
   newEvent <- runInputPost $ iopt textField "event"
+  tryScheduleEvent newEvDay newEvent
+
+tryScheduleEvent :: Day -> Maybe Text -> Handler ()
+tryScheduleEvent newEvDay newEvent = do
   Calendar eventsState permission <- getYesod
   oldEvent <- liftIO $ Map.lookup newEvDay <$> readIORef eventsState
   thisUser <- determineUser
@@ -111,6 +125,12 @@ postCalendrR = do
         _ -> return ()
     Nothing -> redirect SetNameR
   redirect CalendrR
+   
+putScheduleEventR :: Handler ()
+putScheduleEventR = do
+  ScheduleForEvent newEvDaySpec newEvent <- requireJsonBody
+  tryScheduleEvent (read newEvDaySpec)
+                   (guard (not $ null newEvent) >> pure (Txt.pack newEvent))
    
 
 dispEventCalendr :: (User, Permission) -> Day -> Map.Map Day Event -> Widget
@@ -128,11 +148,27 @@ dispEventCalendr usr day₀ events = do
                .calendar .monthblock .days .day-in-month {
                   position: absolute; right: 4px; font-size: 200%; color: rgba(255,255,255,0.3);}
                .calendar .monthblock .days .edit-event-day {width: 96%;}
-               form .request-day {
+               form #request-day {
                   width: 100%; background-color: rgba(80,80,80,0.5); font-size: 50%;}
-               form .event-request {
+               form #event-request {
                   width: 100%; background-color: rgba(160,160,160,0.8);}
                form .event-enter-button {display: none;} |]
+        addScriptRemote "https://code.jquery.com/jquery-3.1.1.min.js"
+        toWidget [julius|
+            $('.edit-event-day form #event-request').blur(function() {
+                eventForm = (this).closest('form');
+                $.ajax({
+                      contentType: "application/json",
+                      processData: false,
+                      url: "@{ScheduleEventR}",
+                      type: "PUT",
+                      data: JSON.stringify({
+                              eventDate: eventForm.elements["request-day"].value, 
+                              scheduledEvent: eventForm.elements["event-request"].value
+                            }),
+                      dataType: "text"
+                  });
+            }); |]
         [whamlet|
            <table class=calendar>
              $forall (month,bmonth) <- daysTable
@@ -166,10 +202,10 @@ dispDay (usr, Permission viewAll _) events d = case Map.lookup d events of
                  #{dayInMonth}
                <div class=edit-event-day>
                  <form method=post>
-                  <input class=request-day
+                  <input #request-day
                          type=text name=day
                          value="#{show d}">
-                  <input class=event-request
+                  <input #event-request
                          type=text name=event
                          value="#{ev}">
                   <input class=event-enter-button
