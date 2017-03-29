@@ -162,9 +162,11 @@ dispEventCalendr usr day₀ events = do
                .calendar .monthblock .days .day-in-month {
                   position: absolute; right: 4px; top:2px; font-size: 200%
                 ; color: rgba(255,255,255,0.3);}
+               .calendar .monthblock .days .event-owner {
+                  position: absolute; right: 4px; top:2px; font-size: 50%; color: black; }
                .calendar .monthblock .days .edit-event-day {width: 96%;}
                form #request-day {
-                  width: 100%; background-color: rgba(80,80,80,0.5); font-size: 50%;}
+                  width: 50%; background-color: rgba(80,80,80,0.5); font-size: 50%;}
                form #event-request {
                   width: 100%; background-color: rgba(160,160,160,0.8);}
                form .event-enter-button {display: none;} |]
@@ -216,6 +218,7 @@ dispDay (usr, Permission viewAll _) events d = do
     Just (Event evUsr ev) -> if viewAll || usr==evUsr
         then [shamlet|
                <div class=edit-event-day>
+                 <div .event-owner> #{evUsr}
                  <form method=post>
                   <input #request-day
                          type=text name=day
@@ -228,7 +231,7 @@ dispDay (usr, Permission viewAll _) events d = do
                          value=enter>
                |]
         else mempty
-    Nothing -> dispDay (usr, Permission True False) (Map.singleton d $ Event usr "") d
+    Nothing -> dispDay (usr, Permission True False) (Map.singleton d $ Event "" "") d
  where dayId = "day" ++ filter isAlphaNum (show d)
        dayInMonth = d ^. gregorian . _ymdDay
 
