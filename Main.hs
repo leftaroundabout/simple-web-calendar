@@ -29,7 +29,7 @@ import Control.Arrow
 import Prelude hiding (mapM)
 import Control.Monad hiding (mapM, forM)
 import Control.Applicative
-import Control.Lens
+import Lens.Micro
 import GHC.Generics
 
 import Data.Thyme
@@ -204,7 +204,7 @@ dispEventCalendr usr day₀ events = do
  where daysTable = map (\monthblock -> (fst $ head monthblock, snd <$> monthblock))
                  . groupBy ((==)`on`fst)
                  . map (\week -> (last week ^. gregorian . _ymdMonth, week))
-                 . groupBy ((==)`on`view (mondayWeek . _mwWeek))
+                 . groupBy ((==)`on`(^. mondayWeek . _mwWeek))
                     $ take 511 [day₀ & mondayWeek . _mwDay .~ 1 ..]
        dayMonthParity d = monthParity $ d ^. gregorian . _ymdMonth
        monthParity m = case m`mod`2 of
