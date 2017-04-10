@@ -78,7 +78,9 @@ getHomeR :: Handler Html
 getHomeR = redirect CalendrR
 
 getSetNameR :: Handler Html
-getSetNameR = defaultLayout $ do
+getSetNameR = do
+   clearSession
+   defaultLayout $ do
         [whamlet|
          <form class=login method=post>
            <div class=username>
@@ -92,6 +94,7 @@ postSetNameR :: Handler ()
 postSetNameR = do
    usr <- runInputPost $ ireq textField "username"
    setSession "username" usr
+   liftIO $ putStrLn ("User " ++ show usr ++ " logged in.")
    redirectUltDest CalendrR
   
 getCalendrR :: Handler Html
@@ -106,7 +109,11 @@ getCalendrR = do
         
         defaultLayout $ do
          setTitle "Calendar"
-         toWidget [lucius|body {background-color: grey;}|]
+         toWidget [lucius|body {background-color: grey;}
+                          #usr-status {text-align: right; color: black;}|]
+         [whamlet| <p #usr-status>
+                      #{fst thisUser}
+                      <a href=@{SetNameR}> logout |]
          dispEventCalendr thisUser today knownEvents
      Nothing -> do
         setUltDestCurrent
@@ -187,6 +194,7 @@ dispEventCalendr usr day₀ events = do
                   });
             }); |]
         [whamlet|
+          <p #main-window>
            <table class=calendar>
              $forall (month,bmonth) <- daysTable
                <tr class=monthblock>
@@ -241,7 +249,8 @@ determineUser = do
     sessionUser <- lookupSession "username"
     Calendar _ _ allPermissions <- getYesod
     return $ case sessionUser of
-        Just u -> Just $ case Map.lookup u allPermissions of
+        Just u | not $ Txt.null u
+              -> Just $ case Map.lookup u allPermissions of
                    Just p -> (u, p)
                    Nothing -> (u, Permission False False)
         Nothing -> Nothing
