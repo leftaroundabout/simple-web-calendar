@@ -4,6 +4,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TupleSections         #-}
+{-# LANGUAGE LambdaCase            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE DeriveGeneric         #-}
 
@@ -58,8 +59,7 @@ data Permission = Permission {
      }
 
 data Calendar = Calendar {
-    eventsSched :: IORef (Map.Map Day Event)
-  , freshlyChanged :: IORef (Map.Map Day (Maybe Event))
+    eventsSched, freshlyChanged :: IORef (Map.Map Day Event)
   , backupFile :: Maybe FilePath
   , userPermissions :: Map.Map User Permission
   }
@@ -130,10 +130,8 @@ tryScheduleEvent :: Day -> Maybe Text -> Handler ()
 tryScheduleEvent newEvDay newEvent = do
   Calendar allEvents recentSched _ permission <- getYesod
   thisUser <- determineUser
-  let modifyTarget :: (Maybe Event -> Maybe a) -> (Maybe a -> Maybe Event) -> (Handler ())
-                   -> IORef (Map.Map Day a) -> Handler ()
-      modifyTarget inj ext postHook eventsState
-       = liftIO (ext . Map.lookup newEvDay <$> readIORef eventsState)
+  let modifyTarget inj postHook eventsState
+       = liftIO (Map.lookup newEvDay <$> readIORef eventsState)
          >>= \oldEvent -> case thisUser of
        Just (usr, Permission _ writeAny) -> case (oldEvent, inj $ Event usr <$> newEvent) of
         (Nothing, Just new) -> do
@@ -147,8 +145,9 @@ tryScheduleEvent newEvDay newEvent = do
             postHook
         _ -> return ()
        Nothing -> redirect SetNameR
-  modifyTarget id id updateBackup allEvents
-  modifyTarget pure join (return()) recentSched
+  modifyTarget id updateBackup allEvents
+  modifyTarget (\case {Nothing | Just (usr,_)<-thisUser -> Just $ Event usr ""; e->e})
+                  (return()) recentSched
   redirect CalendrR
    
 putScheduleEventR :: Handler ()
