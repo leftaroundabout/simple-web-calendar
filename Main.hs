@@ -130,19 +130,17 @@ tryScheduleEvent :: Day -> Maybe Text -> Handler ()
 tryScheduleEvent newEvDay newEvent = do
   Calendar allEvents recentSched _ permission <- getYesod
   thisUser <- determineUser
-  let modifyTarget :: (Event -> a) -> (Maybe a -> Maybe Event) -> (Handler ())
+  let modifyTarget :: (Maybe Event -> Maybe a) -> (Maybe a -> Maybe Event) -> (Handler ())
                    -> IORef (Map.Map Day a) -> Handler ()
       modifyTarget inj ext postHook eventsState
        = liftIO (ext . Map.lookup newEvDay <$> readIORef eventsState)
          >>= \oldEvent -> case thisUser of
-       Just (usr, Permission _ writeAny) -> case (oldEvent,newEvent) of
+       Just (usr, Permission _ writeAny) -> case (oldEvent, inj $ Event usr <$> newEvent) of
         (Nothing, Just new) -> do
-            liftIO . modifyIORef eventsState
-                     . Map.insert newEvDay . inj $ Event usr new
+            liftIO . modifyIORef eventsState $ Map.insert newEvDay new
             postHook
         (Just (Event origUsr _), Just new) | origUsr==usr || writeAny -> do
-            liftIO . modifyIORef eventsState
-                     . Map.insert newEvDay . inj $ Event usr new
+            liftIO . modifyIORef eventsState $ Map.insert newEvDay new
             postHook
         (Just (Event origUsr _), Nothing) | origUsr==usr || writeAny -> do
             liftIO . modifyIORef eventsState $ Map.delete newEvDay
