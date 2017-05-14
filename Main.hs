@@ -59,6 +59,7 @@ data Permission = Permission {
 
 data Calendar = Calendar {
     eventsSched :: IORef (Map.Map Day Event)
+  , freshlyChanged :: IORef (Map.Map Day (Maybe Event))
   , backupFile :: Maybe FilePath
   , userPermissions :: Map.Map User Permission
   }
@@ -102,7 +103,7 @@ getCalendrR = do
    sessionUser <- determineUser
    case sessionUser of
      Just thisUser -> do
-        Calendar eventsState _ allPermissions <- getYesod
+        Calendar eventsState _ _ allPermissions <- getYesod
         knownEvents <- liftIO $ readIORef eventsState
         t <- liftIO getCurrentTime
         let today = t^._utctDay
@@ -127,24 +128,29 @@ postCalendrR = do
 
 tryScheduleEvent :: Day -> Maybe Text -> Handler ()
 tryScheduleEvent newEvDay newEvent = do
-  Calendar eventsState _ permission <- getYesod
-  oldEvent <- liftIO $ Map.lookup newEvDay <$> readIORef eventsState
+  Calendar allEvents recentSched _ permission <- getYesod
   thisUser <- determineUser
-  case thisUser of
-    Just (usr, Permission _ writeAny) -> case (oldEvent,newEvent) of
+  let modifyTarget :: (Event -> a) -> (Maybe a -> Maybe Event) -> (Handler ())
+                   -> IORef (Map.Map Day a) -> Handler ()
+      modifyTarget inj ext postHook eventsState
+       = liftIO (ext . Map.lookup newEvDay <$> readIORef eventsState)
+         >>= \oldEvent -> case thisUser of
+       Just (usr, Permission _ writeAny) -> case (oldEvent,newEvent) of
         (Nothing, Just new) -> do
             liftIO . modifyIORef eventsState
-                     . Map.insert newEvDay $ Event usr new
-            updateBackup
+                     . Map.insert newEvDay . inj $ Event usr new
+            postHook
         (Just (Event origUsr _), Just new) | origUsr==usr || writeAny -> do
             liftIO . modifyIORef eventsState
-                     . Map.insert newEvDay $ Event usr new
-            updateBackup
+                     . Map.insert newEvDay . inj $ Event usr new
+            postHook
         (Just (Event origUsr _), Nothing) | origUsr==usr || writeAny -> do
             liftIO . modifyIORef eventsState $ Map.delete newEvDay
-            updateBackup
+            postHook
         _ -> return ()
-    Nothing -> redirect SetNameR
+       Nothing -> redirect SetNameR
+  modifyTarget id id updateBackup allEvents
+  modifyTarget pure join (return()) recentSched
   redirect CalendrR
    
 putScheduleEventR :: Handler ()
@@ -251,7 +257,7 @@ dispDay (usr, Permission viewAll _) events d = do
 determineUser :: Handler (Maybe (User, Permission))
 determineUser = do
     sessionUser <- lookupSession "username"
-    Calendar _ _ allPermissions <- getYesod
+    Calendar _ _ _ allPermissions <- getYesod
     return $ case sessionUser of
         Just u | not $ Txt.null u
               -> Just $ case Map.lookup u allPermissions of
@@ -263,7 +269,7 @@ determineUser = do
 
 updateBackup :: Handler ()
 updateBackup = do
-    Calendar state bupfile _ <- getYesod
+    Calendar state _ bupfile _ <- getYesod
     case bupfile of
       Nothing -> return ()
       Just bup -> liftIO $ do
@@ -278,6 +284,7 @@ main = do
    let permissions = parsePermissions args
        bupfile = parseBackupfilename args
    initDates <- newIORef $ Map.empty
+   nothingRecent <- newIORef $ Map.empty
    case bupfile of
      Nothing -> do
        putStrLn
@@ -286,7 +293,7 @@ main = do
        Just (JSON.Success calendata)
                <- fmap JSON.fromJSON . JSON.decode <$> BS.readFile bup
        writeIORef initDates $ Map.mapKeys read calendata
-   warp 3735 $ Calendar initDates bupfile permissions
+   warp 3735 $ Calendar initDates nothingRecent bupfile permissions
 
 
 parsePermissions :: [String] -> Map.Map User Permission
