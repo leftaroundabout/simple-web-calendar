@@ -162,6 +162,7 @@ dispEventCalendr usr day₀ events = do
                .calendar .content .days td {position: relative;}
                .calendar .monthblock #evenmonth {background-color: #88B; color: #55C;}
                .calendar .monthblock #oddmonth {background-color: #8B8; color: #090;}
+               .calendar .monthblock #weekend {background-color: #B88; color: #090;}
                .calendar .monthblock .name table {
                   position: relative; width: 5em; }
                .calendar .monthblock .monthname {
@@ -214,7 +215,10 @@ dispEventCalendr usr day₀ events = do
                  . map (\week -> (last week ^. gregorian . _ymdMonth, week))
                  . groupBy ((==)`on`(^. mondayWeek . _mwWeek))
                     $ take 511 [day₀ & mondayWeek . _mwDay .~ 1 ..]
-       dayMonthParity d = monthParity $ d ^. gregorian . _ymdMonth
+       dayMonthParity d
+           | d ^. mondayWeek . _mwDay < 6
+                = monthParity $ d ^. gregorian . _ymdMonth
+           | otherwise  = "weekend"
        monthParity m = case m`mod`2 of
                  0 -> "evenmonth" :: Text
                  1 -> "oddmonth"
