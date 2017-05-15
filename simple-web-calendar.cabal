@@ -20,7 +20,10 @@ executable yesod-calendar
   main-is:             Main.hs
   -- other-modules:       
   other-extensions:    OverloadedStrings, QuasiQuotes, TemplateHaskell, RecordWildCards, MultiParamTypeClasses, TypeFamilies, TupleSections, ScopedTypeVariables, DeriveFunctor
-  build-depends:       base >=4.8 && <4.10, yesod >=1.4 && <1.5, yesod-form, aeson
+  build-depends:       base >=4.8 && <4.10
+                       , yesod >=1.4 && <1.5, yesod-form
+                       , mime-mail >=0.4 && <0.5, mail-accounts >=0.1 && <0.2
+                       , blaze-html, aeson
                        , containers >=0.5 && <0.6, thyme >=0.3 && <0.4
                        , text, bytestring, microlens
   -- hs-source-dirs:      

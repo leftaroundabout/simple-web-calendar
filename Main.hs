@@ -19,7 +19,8 @@ import qualified Data.Text as Txt
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.Aeson as JSON
 import Data.Maybe
-import Data.List (groupBy, isPrefixOf)
+import Data.List (groupBy, isPrefixOf, intercalate)
+import Data.Monoid
 import Data.Ord
 import Data.Function (on, (&))
 import Data.Char (isAlphaNum)
@@ -33,18 +34,24 @@ import Control.Applicative
 import Lens.Micro
 import GHC.Generics
 
+import Control.Concurrent
+import Network.Mail.Mime
+import Network.Mail.Account
+import Text.Blaze.Html.Renderer.Utf8 (renderHtml)
+
 import Data.Thyme
 import Data.Thyme.Calendar.WeekDate
 
 
-type User = Text
+type UserName = Text
+type MailAdress = Text
 
 type TxtDate = String
 
 data Event = Event {
-       eventOrganiser :: User
+       eventOrganiser :: UserName
      , eventDescription :: Text
-     } deriving (Generic)
+     } deriving (Generic, Show)
 instance FromJSON Event
 instance ToJSON Event
 data ScheduleForEvent = ScheduleForEvent {
@@ -53,15 +60,32 @@ data ScheduleForEvent = ScheduleForEvent {
      } deriving (Generic)
 instance FromJSON ScheduleForEvent
 
+data Actor = Actor {
+      actorPermissions :: Permission
+    , actorSubscribers :: [MailAdress]
+    } deriving (Generic)
+instance FromJSON Actor
+instance ToJSON Actor
 data Permission = Permission {
        _permissionViewAll :: Bool
      , _permissionPostAll :: Bool
-     }
+     } deriving (Generic)
+instance FromJSON Permission
+instance ToJSON Permission
+
+type UsersConfiguration = Map.Map UserName Actor
+
+data GlobalConfig = GlobalConfig {
+      usersConfiguration :: UsersConfiguration
+    , notifierAccounts :: [MailAccount]
+    , backupFiles :: [FilePath]
+    } deriving (Generic)
+instance FromJSON GlobalConfig
+instance ToJSON GlobalConfig
 
 data Calendar = Calendar {
     eventsSched, freshlyChanged :: IORef (Map.Map Day Event)
-  , backupFile :: Maybe FilePath
-  , userPermissions :: Map.Map User Permission
+  , globalConfig :: GlobalConfig
   }
 instance RenderMessage Calendar FormMessage where
     renderMessage _ _ = defaultFormMessage
@@ -103,7 +127,7 @@ getCalendrR = do
    sessionUser <- determineUser
    case sessionUser of
      Just thisUser -> do
-        Calendar eventsState _ _ allPermissions <- getYesod
+        Calendar eventsState _ (GlobalConfig allPermissions _ _) <- getYesod
         knownEvents <- liftIO $ readIORef eventsState
         t <- liftIO getCurrentTime
         let today = t^._utctDay
@@ -128,7 +152,7 @@ postCalendrR = do
 
 tryScheduleEvent :: Day -> Maybe Text -> Handler ()
 tryScheduleEvent newEvDay newEvent = do
-  Calendar allEvents recentSched _ permission <- getYesod
+  Calendar allEvents recentSched (GlobalConfig permission _ _) <- getYesod
   thisUser <- determineUser
   let modifyTarget inj postHook eventsState
        = liftIO (Map.lookup newEvDay <$> readIORef eventsState)
@@ -157,7 +181,7 @@ putScheduleEventR = do
                    (guard (not $ null newEvent) >> pure (Txt.pack newEvent))
    
 
-dispEventCalendr :: (User, Permission) -> Day -> Map.Map Day Event -> Widget
+dispEventCalendr :: (UserName, Permission) -> Day -> Map.Map Day Event -> Widget
 dispEventCalendr usr day₀ events = do
         toWidget [lucius|
                table.calendar, .calendar form input {color: black;}
@@ -226,7 +250,7 @@ dispEventCalendr usr day₀ events = do
                  0 -> "evenmonth" :: Text
                  1 -> "oddmonth"
 
-dispDay :: (User, Permission) -> Map.Map Day Event -> Day -> Html
+dispDay :: (UserName, Permission) -> Map.Map Day Event -> Day -> Html
 dispDay (usr, Permission viewAll _) events d = do
   [shamlet| <div class=day-in-month> #{dayInMonth} |]
   case Map.lookup d events of
@@ -251,14 +275,14 @@ dispDay (usr, Permission viewAll _) events d = do
        dayInMonth = d ^. gregorian . _ymdDay
 
 
-determineUser :: Handler (Maybe (User, Permission))
+determineUser :: Handler (Maybe (UserName, Permission))
 determineUser = do
     sessionUser <- lookupSession "username"
-    Calendar _ _ _ allPermissions <- getYesod
+    Calendar _ _ (GlobalConfig allUsers _ _) <- getYesod
     return $ case sessionUser of
         Just u | not $ Txt.null u
-              -> Just $ case Map.lookup u allPermissions of
-                   Just p -> (u, p)
+              -> Just $ case Map.lookup u allUsers of
+                   Just (Actor p _) -> (u, p)
                    Nothing -> (u, Permission False False)
         Nothing -> Nothing
 
@@ -266,47 +290,92 @@ determineUser = do
 
 updateBackup :: Handler ()
 updateBackup = do
-    Calendar state _ bupfile _ <- getYesod
-    case bupfile of
-      Nothing -> return ()
-      Just bup -> liftIO $ do
+    Calendar state _ (GlobalConfig _ _ bupfiles) <- getYesod
+    forM_ bupfiles $ \bup -> liftIO $ do
          calendata <- readIORef state
          BS.writeFile bup . JSON.encode . toJSON $ Map.mapKeys show calendata
+
+
+instance Monoid GlobalConfig where
+  mempty = GlobalConfig Map.empty [] []
+  mappend (GlobalConfig u₀ n₀ b₀) (GlobalConfig u₁ n₁ b₁)
+       = GlobalConfig (Map.unionWith updateActor u₀ u₁) (n₀<>n₁) (b₀<>b₁)
+   where updateActor (Actor (Permission view₀ post₀) subs₀)
+                     (Actor (Permission view₁ post₁) subs₁)
+                  = Actor (Permission (view₀||view₁) (post₀||post₁)) (subs₀<>subs₁)
+
+
+notifier :: MailAccount -> Calendar -> IO ()
+notifier account (Calendar _ news (GlobalConfig _ permissions _)) = loop
+ where loop = do
+         threadDelay $ 8 * 10^6
+         toAnnounce <- atomicModifyIORef news $ \n -> (Map.empty, n)
+         when (not (Map.null toAnnounce) && False) $ do
+           let subject = show toAnnounce
+           putStrLn subject
+           account `sendsMail` \m -> m
+             { mailTo = [Address Nothing "address@host.de"]
+             , mailHeaders
+                = [("Subject", Txt.pack subject)]
+             , mailParts
+                = [[Part
+                    { partType = "text/html; charset=utf-8"
+                    , partEncoding = None
+                    , partFilename = Nothing
+                    , partContent = renderHtml
+                        [shamlet|
+                           <p>Mail content |]
+                    , partHeaders = []
+                    }]
+                  ]
+             }
+         loop
 
 
 
 main :: IO ()
 main = do
    args <- getArgs
-   let permissions = parsePermissions args
-       bupfile = parseBackupfilename args
+   
+   config <- parseConfiguration args
+   dispConfigurationInfo config
+   
    initDates <- newIORef $ Map.empty
    nothingRecent <- newIORef $ Map.empty
-   case bupfile of
-     Nothing -> do
+   case backupFiles config of
+     [] -> do
        putStrLn
          "Warning: running without persistent backup. Data will be lost after shutdown."
-     Just bup -> do
+     (bup:bups) -> do
        Just (JSON.Success calendata)
                <- fmap JSON.fromJSON . JSON.decode <$> BS.readFile bup
        writeIORef initDates $ Map.mapKeys read calendata
-   warp 3735 $ Calendar initDates nothingRecent bupfile permissions
+   let calendar = Calendar initDates nothingRecent config
+   forM_ (notifierAccounts config) $ \account -> forkIO $ notifier account calendar
+   warp 3735 calendar
 
 
-parsePermissions :: [String] -> Map.Map User Permission
-parsePermissions [] = Map.empty
-parsePermissions (arg:args)
- | "--superuser="`isPrefixOf`arg  = Map.insert
-                                      (Txt.pack . filter (/='"') . tail
-                                             $ dropWhile (/='=') arg)
-                                      (Permission True True)
-                                     $ parsePermissions args
- | otherwise  = parsePermissions args
 
-parseBackupfilename :: [String] -> Maybe FilePath
-parseBackupfilename [] = Nothing
-parseBackupfilename (arg:args)
- | "--backupfile="`isPrefixOf`arg  = Just (filter (/='"') . tail
-                                             $ dropWhile (/='=') arg)
- | otherwise  = parseBackupfilename args
+parseConfiguration :: [String] -> IO GlobalConfig
+parseConfiguration [] = return mempty
+parseConfiguration (arg:args)
+ | "--config-file="`isPrefixOf`arg = do
+        let confFile = (filter (/='"') . tail $ dropWhile (/='=') arg)
+        Just (JSON.Success thisConfig)
+               <- fmap JSON.fromJSON . JSON.decode <$> BS.readFile confFile
+        (thisConfig<>) <$> parseConfiguration args
+ | "--backupfile="`isPrefixOf`arg
+ , bupfile <- (filter (/='"') . tail $ dropWhile (/='=') arg)
+         = (GlobalConfig mempty [] [bupfile]<>) <$> parseConfiguration args
+ | "--superuser="`isPrefixOf`arg
+ , actor <- (Txt.pack . filter (/='"') . tail $ dropWhile (/='=') arg)
+         = (GlobalConfig (Map.singleton actor (Actor (Permission True True) []))
+                             [] []<>) <$> parseConfiguration args
+ | otherwise  = parseConfiguration args
 
+
+dispConfigurationInfo :: GlobalConfig -> IO ()
+dispConfigurationInfo conf@(GlobalConfig _ notifierAccounts _) = do
+        putStrLn $ "Sending change notifications from "
+                     ++ (intercalate ", " $ show . userMail <$> notifierAccounts)
+        when False . BS.writeFile "global-config.json" . JSON.encode $ toJSON conf
