@@ -12,6 +12,9 @@
 import Yesod
 import Yesod.Form.Jquery
 
+import Text.Cassius (Css)
+import Text.Julius (Javascript)
+
 import System.Environment (getArgs)
 
 import Data.Text(Text)
@@ -141,7 +144,7 @@ getCalendrR = do
          [whamlet| <p #usr-status>
                       #{fst thisUser}
                       <a href=@{SetNameR}> logout |]
-         dispEventCalendr thisUser today knownEvents
+         toWidget $ dispEventCalendr thisUser today knownEvents
      Nothing -> do
         setUltDestCurrent
         redirect SetNameR
@@ -183,9 +186,9 @@ putScheduleEventR = do
                    (guard (not $ null newEvent) >> pure (Txt.pack newEvent))
    
 
-dispEventCalendr :: (UserName, Permission) -> Day -> Map.Map Day Event -> Widget
-dispEventCalendr usr day₀ events = do
-        toWidget [lucius|
+dispEventCalendr :: (UserName, Permission) -> Day -> Map.Map Day Event -> PseudoWidget
+dispEventCalendr usr day₀ events = PseudoWidget {
+     widgetCSS = [lucius|
                table.calendar, .calendar form input {color: black;}
                .calendar .content .days {table-layout: fixed; width: 100%;}
                .calendar .content .days td {position: relative;}
@@ -206,9 +209,8 @@ dispEventCalendr usr day₀ events = do
                   width: 50%; background-color: rgba(80,80,80,0.5); font-size: 50%;}
                form #event-request {
                   width: 100%; background-color: rgba(160,160,160,0.8);}
-               form .event-enter-button {display: none;} |]
-        addScriptRemote "https://code.jquery.com/jquery-3.1.1.min.js"
-        toWidget [julius|
+               form .event-enter-button {display: none;} |] ()
+   , widgetJS = [julius|
             $('.edit-event-day form #event-request').blur(function() {
                 eventForm = (this).closest('form');
                 $.ajax({
@@ -223,7 +225,7 @@ dispEventCalendr usr day₀ events = do
                       dataType: "text"
                   });
             }); |]
-        [whamlet|
+   , widgetHTML = [shamlet|
           <p #main-window>
            <table class=calendar>
              $forall (month,bmonth) <- daysTable
@@ -239,6 +241,7 @@ dispEventCalendr usr day₀ events = do
                           <td class=day id=#{dayMonthParity day}>
                             #{dispDay usr events day}
          |]
+   }
  where daysTable = map (\monthblock -> (fst $ head monthblock, snd <$> monthblock))
                  . groupBy ((==)`on`fst)
                  . map (\week -> (last week ^. gregorian . _ymdMonth, week))
@@ -393,3 +396,19 @@ dispConfigurationInfo conf@(GlobalConfig _ notifierAccounts _ _) = do
         putStrLn $ "Sending change notifications from "
                      ++ (intercalate ", " $ show . userMail <$> notifierAccounts)
         when False . BS.writeFile "global-config.json" $ JSON.encodePretty conf
+
+
+
+data PseudoWidget = PseudoWidget {
+     widgetHTML :: Html
+   , widgetCSS :: Css
+   , widgetJS :: JavascriptUrl (Route Calendar)
+   }
+
+instance ToWidget Calendar PseudoWidget where
+  toWidget (PseudoWidget htm css js) = do
+        toWidget css
+        addScriptRemote "https://code.jquery.com/jquery-3.1.1.min.js"
+        toWidget js
+        toWidget htm
+
