@@ -146,7 +146,7 @@ getCalendrR = do
          [whamlet| <p #usr-status>
                       #{fst thisUser}
                       <a href=@{SetNameR}> logout |]
-         toWidget $ dispEventCalendr thisUser today knownEvents
+         toWidget $ dispEventCalendr thisUser (today, 511) knownEvents
      Nothing -> do
         setUltDestCurrent
         redirect SetNameR
@@ -188,8 +188,9 @@ putScheduleEventR = do
                    (guard (not $ null newEvent) >> pure (Txt.pack newEvent))
    
 
-dispEventCalendr :: (UserName, Permission) -> Day -> Map.Map Day Event -> PseudoWidget
-dispEventCalendr usr day₀ events = PseudoWidget {
+dispEventCalendr
+      :: (UserName, Permission) -> (Day, Int) -> Map.Map Day Event -> PseudoWidget
+dispEventCalendr usr (day₀, nDispDays) events = PseudoWidget {
      widgetCSS = [lucius|
                table.calendar, .calendar form input {color: black;}
                .calendar .content .days {table-layout: fixed; width: 100%;}
@@ -248,7 +249,7 @@ dispEventCalendr usr day₀ events = PseudoWidget {
                  . groupBy ((==)`on`fst)
                  . map (\week -> (last week ^. gregorian . _ymdMonth, week))
                  . groupBy ((==)`on`(^. mondayWeek . _mwWeek))
-                    $ take 511 [day₀ & mondayWeek . _mwDay .~ 1 ..]
+                    $ take nDispDays [day₀ & mondayWeek . _mwDay .~ 1 ..]
        dayMonthParity d
            | d ^. mondayWeek . _mwDay < 6
                 = monthParity $ d ^. gregorian . _ymdMonth
@@ -324,7 +325,11 @@ notifier account (Calendar allCal news (GlobalConfig users permissions _ _)) = l
                    = permissionViewAll permissions || organiser==usrName
               subject = show relevantEvents
               userCalendar = Map.filter relevant calendata
-              (soonest, _) = Map.findMin userCalendar
+              ~((soonest, _):_) = relevantEvents
+              latest | Map.null userCalendar  = soonest
+                     | otherwise              = fst $ Map.findMax userCalendar
+              userCalendarSpan = max 28
+                           $ latest^.modifiedJulianDay - soonest^.modifiedJulianDay + 1
 --          mailCalendar <- 
           when (not $ null relevantEvents) . forM_ subs $ \subscriber -> do
             putStrLn subject
@@ -338,7 +343,8 @@ notifier account (Calendar allCal news (GlobalConfig users permissions _ _)) = l
                     , partEncoding = None
                     , partFilename = Nothing
                     , partContent = renderHtml . flatWidget
-                            $ dispEventCalendr (usrName, permissions) soonest userCalendar
+                            $ dispEventCalendr (usrName, permissions)
+                                                   (soonest, userCalendarSpan) userCalendar
                     , partHeaders = []
                     }]
                   ,[Part
