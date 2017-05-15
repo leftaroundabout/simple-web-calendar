@@ -68,8 +68,8 @@ data Actor = Actor {
 instance FromJSON Actor
 instance ToJSON Actor
 data Permission = Permission {
-       _permissionViewAll :: Bool
-     , _permissionPostAll :: Bool
+       permissionViewAll :: Bool
+     , permissionPostAll :: Bool
      } deriving (Generic)
 instance FromJSON Permission
 instance ToJSON Permission
@@ -308,15 +308,20 @@ instance Monoid GlobalConfig where
 
 
 notifier :: MailAccount -> Calendar -> IO ()
-notifier account (Calendar _ news (GlobalConfig _ permissions _ _)) = loop
+notifier account (Calendar allCal news (GlobalConfig users permissions _ _)) = loop
  where loop = do
-         threadDelay $ 8 * 10^6
-         toAnnounce <- atomicModifyIORef news $ \n -> (Map.empty, n)
-         when (not (Map.null toAnnounce) && False) $ do
-           let subject = show toAnnounce
-           putStrLn subject
-           account `sendsMail` \m -> m
-             { mailTo = [Address Nothing "address@host.de"]
+        threadDelay $ 8 * 10^6
+        toAnnounce <- atomicModifyIORef news $ \n -> (Map.empty, Map.toList n)
+        calendata <- readIORef allCal
+        forM_ (Map.toList users) $ \(usrName, Actor (Permission seesAll _) subs) -> do
+          let relevantEvents = filter (relevant . snd) toAnnounce
+              relevant (Event organiser _) = seesAll || organiser==usrName
+              subject = show relevantEvents
+              userCalendar = Map.filter relevant calendata
+          when (not $ null relevantEvents) . forM_ subs $ \subscriber -> do
+            putStrLn subject
+            account `sendsMail` \m -> m
+             { mailTo = [Address Nothing subscriber]
              , mailHeaders
                 = [("Subject", Txt.pack subject)]
              , mailParts
@@ -329,9 +334,16 @@ notifier account (Calendar _ news (GlobalConfig _ permissions _ _)) = loop
                            <p>Mail content |]
                     , partHeaders = []
                     }]
+                  ,[Part
+                    { partType = "text/json; charset=utf-8"
+                    , partEncoding = None
+                    , partFilename = Just "calendar.json"
+                    , partContent = JSON.encodePretty $ Map.mapKeys show userCalendar
+                    , partHeaders = []
+                    }]
                   ]
              }
-         loop
+        loop
 
 
 
