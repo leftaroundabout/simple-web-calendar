@@ -18,6 +18,7 @@ import Data.Text(Text)
 import qualified Data.Text as Txt
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.Aeson as JSON
+import qualified Data.Aeson.Encode.Pretty as JSON
 import Data.Maybe
 import Data.List (groupBy, isPrefixOf, intercalate)
 import Data.Monoid
@@ -294,7 +295,7 @@ updateBackup = do
     Calendar state _ (GlobalConfig _ _ bupfiles _) <- getYesod
     forM_ bupfiles $ \bup -> liftIO $ do
          calendata <- readIORef state
-         BS.writeFile bup . JSON.encode . toJSON $ Map.mapKeys show calendata
+         BS.writeFile bup . JSON.encode $ Map.mapKeys show calendata
 
 
 instance Monoid GlobalConfig where
@@ -379,4 +380,4 @@ dispConfigurationInfo :: GlobalConfig -> IO ()
 dispConfigurationInfo conf@(GlobalConfig _ notifierAccounts _ _) = do
         putStrLn $ "Sending change notifications from "
                      ++ (intercalate ", " $ show . userMail <$> notifierAccounts)
-        when False . BS.writeFile "global-config.json" . JSON.encode $ toJSON conf
+        when False . BS.writeFile "global-config.json" $ JSON.encodePretty conf
