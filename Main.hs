@@ -30,6 +30,7 @@ import Data.Ord
 import Data.Function (on, (&))
 import Data.Char (isAlphaNum)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import Data.Traversable
 import Data.IORef
 import Control.Arrow
@@ -134,8 +135,10 @@ getCalendrR = do
    sessionUser <- determineUser
    case sessionUser of
      Just thisUser -> do
-        Calendar eventsState _ (GlobalConfig allPermissions _ _ _) <- getYesod
+        Calendar eventsState recentState (GlobalConfig allPermissions _ _ _) <- getYesod
         knownEvents <- liftIO $ readIORef eventsState
+        recentlyChanged <- liftIO $ Set.fromList . map fst . Map.toList
+                                          <$> readIORef recentState
         t <- liftIO getCurrentTime
         let today = t^._utctDay
         
@@ -146,7 +149,7 @@ getCalendrR = do
          [whamlet| <p #usr-status>
                       #{fst thisUser}
                       <a href=@{SetNameR}> logout |]
-         toWidget $ dispEventCalendr thisUser (today, 511) knownEvents
+         toWidget $ dispEventCalendr thisUser (today, 511) knownEvents recentlyChanged
      Nothing -> do
         setUltDestCurrent
         redirect SetNameR
@@ -189,8 +192,10 @@ putScheduleEventR = do
    
 
 dispEventCalendr
-      :: (UserName, Permission) -> (Day, Int) -> Map.Map Day Event -> PseudoWidget
-dispEventCalendr usr (day₀, nDispDays) events = PseudoWidget {
+      :: (UserName, Permission) -> (Day, Int)
+             -> Map.Map Day Event -> Set.Set Day
+             -> PseudoWidget
+dispEventCalendr usr (day₀, nDispDays) events highlights = PseudoWidget {
      widgetCSS = [lucius|
                table.calendar, .calendar form input {color: black;}
                .calendar .content .days {table-layout: fixed; width: 100%;}
@@ -198,6 +203,7 @@ dispEventCalendr usr (day₀, nDispDays) events = PseudoWidget {
                .calendar .monthblock #evenmonth {background-color: #88B; color: #55C;}
                .calendar .monthblock #oddmonth {background-color: #8B8; color: #090;}
                .calendar .monthblock #weekend {background-color: #B88; color: #090;}
+               .calendar .monthblock #highlighted {background-color: #EA3; color: #090;}
                .calendar .monthblock .name table {
                   position: relative; width: 5em; }
                .calendar .monthblock .monthname {
@@ -251,6 +257,8 @@ dispEventCalendr usr (day₀, nDispDays) events = PseudoWidget {
                  . groupBy ((==)`on`(^. mondayWeek . _mwWeek))
                     $ take nDispDays [day₀ & mondayWeek . _mwDay .~ 1 ..]
        dayMonthParity d
+           | Set.member d highlights
+                        = "highlighted"
            | d ^. mondayWeek . _mwDay < 6
                 = monthParity $ d ^. gregorian . _ymdMonth
            | otherwise  = "weekend"
@@ -344,7 +352,8 @@ notifier account (Calendar allCal news (GlobalConfig users permissions _ _)) = l
                     , partFilename = Nothing
                     , partContent = renderHtml . flatWidget
                             $ dispEventCalendr (usrName, permissions)
-                                                   (soonest, userCalendarSpan) userCalendar
+                                  (soonest, userCalendarSpan)
+                                  userCalendar (Set.fromList $ fst <$> relevantEvents)
                     , partHeaders = []
                     }]
                   ,[Part
