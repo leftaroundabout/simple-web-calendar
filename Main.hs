@@ -324,21 +324,21 @@ instance Monoid GlobalConfig where
 notifier :: MailAccount -> Calendar -> IO ()
 notifier account (Calendar allCal news (GlobalConfig users permissions _ _)) = loop
  where loop = do
-        threadDelay $ 8 * 10^6
+        threadDelay $ 1024 * 10^6
         toAnnounce <- atomicModifyIORef news $ \n -> (Map.empty, Map.toList n)
         calendata <- readIORef allCal
         forM_ (Map.toList users) $ \(usrName, Actor permissions subs) -> do
           let relevantEvents = filter (relevant . snd) toAnnounce
               relevant (Event organiser _)
                    = permissionViewAll permissions || organiser==usrName
-              subject = show relevantEvents
+              subject = intercalate ", " $ disp <$> relevantEvents
+               where disp (day, (Event _ ev)) = show day ++ ": " ++ show ev
               userCalendar = Map.filter relevant calendata
               ~((soonest, _):_) = relevantEvents
               latest | Map.null userCalendar  = soonest
                      | otherwise              = fst $ Map.findMax userCalendar
               userCalendarSpan = max 28
                            $ latest^.modifiedJulianDay - soonest^.modifiedJulianDay + 1
---          mailCalendar <- 
           when (not $ null relevantEvents) . forM_ subs $ \subscriber -> do
             putStrLn subject
             account `sendsMail` \m -> m
