@@ -79,6 +79,7 @@ data GlobalConfig = GlobalConfig {
       usersConfiguration :: UsersConfiguration
     , notifierAccounts :: [MailAccount]
     , backupFiles :: [FilePath]
+    , tcpPortNumber :: Maybe Int
     } deriving (Generic)
 instance FromJSON GlobalConfig
 instance ToJSON GlobalConfig
@@ -127,7 +128,7 @@ getCalendrR = do
    sessionUser <- determineUser
    case sessionUser of
      Just thisUser -> do
-        Calendar eventsState _ (GlobalConfig allPermissions _ _) <- getYesod
+        Calendar eventsState _ (GlobalConfig allPermissions _ _ _) <- getYesod
         knownEvents <- liftIO $ readIORef eventsState
         t <- liftIO getCurrentTime
         let today = t^._utctDay
@@ -152,7 +153,7 @@ postCalendrR = do
 
 tryScheduleEvent :: Day -> Maybe Text -> Handler ()
 tryScheduleEvent newEvDay newEvent = do
-  Calendar allEvents recentSched (GlobalConfig permission _ _) <- getYesod
+  Calendar allEvents recentSched (GlobalConfig permission _ _ _) <- getYesod
   thisUser <- determineUser
   let modifyTarget inj postHook eventsState
        = liftIO (Map.lookup newEvDay <$> readIORef eventsState)
@@ -278,7 +279,7 @@ dispDay (usr, Permission viewAll _) events d = do
 determineUser :: Handler (Maybe (UserName, Permission))
 determineUser = do
     sessionUser <- lookupSession "username"
-    Calendar _ _ (GlobalConfig allUsers _ _) <- getYesod
+    Calendar _ _ (GlobalConfig allUsers _ _ _) <- getYesod
     return $ case sessionUser of
         Just u | not $ Txt.null u
               -> Just $ case Map.lookup u allUsers of
@@ -290,23 +291,23 @@ determineUser = do
 
 updateBackup :: Handler ()
 updateBackup = do
-    Calendar state _ (GlobalConfig _ _ bupfiles) <- getYesod
+    Calendar state _ (GlobalConfig _ _ bupfiles _) <- getYesod
     forM_ bupfiles $ \bup -> liftIO $ do
          calendata <- readIORef state
          BS.writeFile bup . JSON.encode . toJSON $ Map.mapKeys show calendata
 
 
 instance Monoid GlobalConfig where
-  mempty = GlobalConfig Map.empty [] []
-  mappend (GlobalConfig u₀ n₀ b₀) (GlobalConfig u₁ n₁ b₁)
-       = GlobalConfig (Map.unionWith updateActor u₀ u₁) (n₀<>n₁) (b₀<>b₁)
+  mempty = GlobalConfig Map.empty [] [] Nothing
+  mappend (GlobalConfig u₀ n₀ b₀ p₀) (GlobalConfig u₁ n₁ b₁ p₁)
+       = GlobalConfig (Map.unionWith updateActor u₀ u₁) (n₀<>n₁) (b₀<>b₁) (p₀<|>p₁)
    where updateActor (Actor (Permission view₀ post₀) subs₀)
                      (Actor (Permission view₁ post₁) subs₁)
                   = Actor (Permission (view₀||view₁) (post₀||post₁)) (subs₀<>subs₁)
 
 
 notifier :: MailAccount -> Calendar -> IO ()
-notifier account (Calendar _ news (GlobalConfig _ permissions _)) = loop
+notifier account (Calendar _ news (GlobalConfig _ permissions _ _)) = loop
  where loop = do
          threadDelay $ 8 * 10^6
          toAnnounce <- atomicModifyIORef news $ \n -> (Map.empty, n)
@@ -352,7 +353,7 @@ main = do
        writeIORef initDates $ Map.mapKeys read calendata
    let calendar = Calendar initDates nothingRecent config
    forM_ (notifierAccounts config) $ \account -> forkIO $ notifier account calendar
-   warp 3735 calendar
+   warp (maybe 3735 id $ tcpPortNumber config) calendar
 
 
 
@@ -366,16 +367,16 @@ parseConfiguration (arg:args)
         (thisConfig<>) <$> parseConfiguration args
  | "--backupfile="`isPrefixOf`arg
  , bupfile <- (filter (/='"') . tail $ dropWhile (/='=') arg)
-         = (GlobalConfig mempty [] [bupfile]<>) <$> parseConfiguration args
+         = (GlobalConfig mempty [] [bupfile] Nothing<>) <$> parseConfiguration args
  | "--superuser="`isPrefixOf`arg
  , actor <- (Txt.pack . filter (/='"') . tail $ dropWhile (/='=') arg)
          = (GlobalConfig (Map.singleton actor (Actor (Permission True True) []))
-                             [] []<>) <$> parseConfiguration args
+                             [] [] Nothing<>) <$> parseConfiguration args
  | otherwise  = parseConfiguration args
 
 
 dispConfigurationInfo :: GlobalConfig -> IO ()
-dispConfigurationInfo conf@(GlobalConfig _ notifierAccounts _) = do
+dispConfigurationInfo conf@(GlobalConfig _ notifierAccounts _ _) = do
         putStrLn $ "Sending change notifications from "
                      ++ (intercalate ", " $ show . userMail <$> notifierAccounts)
         when False . BS.writeFile "global-config.json" . JSON.encode $ toJSON conf
