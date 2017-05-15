@@ -12,13 +12,14 @@
 import Yesod
 import Yesod.Form.Jquery
 
-import Text.Cassius (Css)
+import Text.Cassius (Css, renderCss)
 import Text.Julius (Javascript)
 
 import System.Environment (getArgs)
 
 import Data.Text(Text)
 import qualified Data.Text as Txt
+import qualified Data.Text.Lazy as Txt (toStrict)
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.Aeson as JSON
 import qualified Data.Aeson.Encode.Pretty as JSON
@@ -42,6 +43,7 @@ import Control.Concurrent
 import Network.Mail.Mime
 import Network.Mail.Account
 import Text.Blaze.Html.Renderer.Utf8 (renderHtml)
+import qualified Text.Blaze.Html5 as Blaze
 
 import Data.Thyme
 import Data.Thyme.Calendar.WeekDate
@@ -316,11 +318,14 @@ notifier account (Calendar allCal news (GlobalConfig users permissions _ _)) = l
         threadDelay $ 8 * 10^6
         toAnnounce <- atomicModifyIORef news $ \n -> (Map.empty, Map.toList n)
         calendata <- readIORef allCal
-        forM_ (Map.toList users) $ \(usrName, Actor (Permission seesAll _) subs) -> do
+        forM_ (Map.toList users) $ \(usrName, Actor permissions subs) -> do
           let relevantEvents = filter (relevant . snd) toAnnounce
-              relevant (Event organiser _) = seesAll || organiser==usrName
+              relevant (Event organiser _)
+                   = permissionViewAll permissions || organiser==usrName
               subject = show relevantEvents
               userCalendar = Map.filter relevant calendata
+              (soonest, _) = Map.findMin userCalendar
+--          mailCalendar <- 
           when (not $ null relevantEvents) . forM_ subs $ \subscriber -> do
             putStrLn subject
             account `sendsMail` \m -> m
@@ -332,9 +337,8 @@ notifier account (Calendar allCal news (GlobalConfig users permissions _ _)) = l
                     { partType = "text/html; charset=utf-8"
                     , partEncoding = None
                     , partFilename = Nothing
-                    , partContent = renderHtml
-                        [shamlet|
-                           <p>Mail content |]
+                    , partContent = renderHtml . flatWidget
+                            $ dispEventCalendr (usrName, permissions) soonest userCalendar
                     , partHeaders = []
                     }]
                   ,[Part
@@ -412,3 +416,6 @@ instance ToWidget Calendar PseudoWidget where
         toWidget js
         toWidget htm
 
+flatWidget :: PseudoWidget -> Html
+flatWidget (PseudoWidget htm css _)
+     = (Blaze.style . Blaze.preEscapedText . Txt.toStrict $ renderCss css) <> htm
