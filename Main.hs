@@ -208,6 +208,8 @@ dispEventCalendr usr (day₀, nDispDays) events highlights = PseudoWidget {
                   position: relative; width: 5em; }
                .calendar .monthblock .monthname {
                   position: absolute; font-size: 400%; right: 0px;}
+               .calendar .monthblock .content {
+                  min-width: 28em;}
                .calendar .monthblock .days .day-in-month {
                   position: absolute; right: 4px; top:2px; font-size: 200%
                 ; color: rgba(255,255,255,0.3);}
