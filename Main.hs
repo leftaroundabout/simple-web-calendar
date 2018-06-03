@@ -70,6 +70,7 @@ instance FromJSON ScheduleForEvent
 data Actor = Actor {
       actorPermissions :: Permission
     , actorSubscribers :: [MailAdress]
+    , actorAliases :: [UserName]
     } deriving (Generic)
 instance FromJSON Actor
 instance ToJSON Actor
@@ -127,7 +128,8 @@ postSetNameR :: Handler ()
 postSetNameR = do
    usr <- runInputPost $ ireq textField "username"
    setSession "username" usr
-   liftIO $ putStrLn ("User " ++ show usr ++ " logged in.")
+   Just (usr', _) <- determineUser
+   liftIO $ putStrLn ("User " ++ show usr' ++ " logged in.")
    redirectUltDest CalendrR
   
 getCalendrR :: Handler Html
@@ -297,12 +299,23 @@ determineUser :: Handler (Maybe (UserName, Permission))
 determineUser = do
     sessionUser <- lookupSession "username"
     Calendar _ _ (GlobalConfig allUsers _ _ _) <- getYesod
-    return $ case sessionUser of
+    case sessionUser of
         Just u | not $ Txt.null u
-              -> Just $ case Map.lookup u allUsers of
-                   Just (Actor p _) -> (u, p)
-                   Nothing -> (u, Permission False False)
-        Nothing -> Nothing
+              -> Just <$> case Map.lookup u allUsers of
+                   Just (Actor p _ _) -> return (u, p)
+                   Nothing -> case [ pn | (pn, Actor _ _ aliases) <- Map.toList allUsers
+                                        , u`elem`aliases ] of
+                      (preferredName:_)
+                       | Just (Actor p _ _)
+                                         <- Map.lookup preferredName allUsers
+                         -> do
+                           setSession "username" preferredName
+                           return (preferredName, p)
+                       | otherwise -> do
+                           setSession "username" preferredName
+                           return (preferredName, Permission False False)
+                      [] -> return (u, Permission False False)
+        Nothing -> return Nothing
 
                 
 
@@ -318,9 +331,10 @@ instance Monoid GlobalConfig where
   mempty = GlobalConfig Map.empty [] [] Nothing
   mappend (GlobalConfig u₀ n₀ b₀ p₀) (GlobalConfig u₁ n₁ b₁ p₁)
        = GlobalConfig (Map.unionWith updateActor u₀ u₁) (n₀<>n₁) (b₀<>b₁) (p₀<|>p₁)
-   where updateActor (Actor (Permission view₀ post₀) subs₀)
-                     (Actor (Permission view₁ post₁) subs₁)
-                  = Actor (Permission (view₀||view₁) (post₀||post₁)) (subs₀<>subs₁)
+   where updateActor (Actor (Permission view₀ post₀) subs₀ ali₀)
+                     (Actor (Permission view₁ post₁) subs₁ ali₁)
+                  = Actor (Permission (view₀||view₁) (post₀||post₁))
+                          (subs₀<>subs₁) (ali₀<>ali₁)
 
 
 notifier :: MailAccount -> Calendar -> IO ()
@@ -329,7 +343,7 @@ notifier account (Calendar allCal news (GlobalConfig users permissions _ _)) = l
         threadDelay $ 1024 * 10^6
         toAnnounce <- atomicModifyIORef news $ \n -> (Map.empty, Map.toList n)
         calendata <- readIORef allCal
-        forM_ (Map.toList users) $ \(usrName, Actor permissions subs) -> do
+        forM_ (Map.toList users) $ \(usrName, Actor permissions subs _) -> do
           let relevantEvents = filter (relevant . snd) toAnnounce
               relevant (Event organiser _)
                    = permissionViewAll permissions || organiser==usrName
@@ -407,7 +421,7 @@ parseConfiguration (arg:args)
          = (GlobalConfig mempty [] [bupfile] Nothing<>) <$> parseConfiguration args
  | "--superuser="`isPrefixOf`arg
  , actor <- (Txt.pack . filter (/='"') . tail $ dropWhile (/='=') arg)
-         = (GlobalConfig (Map.singleton actor (Actor (Permission True True) []))
+         = (GlobalConfig (Map.singleton actor (Actor (Permission True True) [] []))
                              [] [] Nothing<>) <$> parseConfiguration args
  | otherwise  = parseConfiguration args
 
